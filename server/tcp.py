@@ -3,14 +3,10 @@ import os
 import re
 import pickle
 import struct
-import cv2
-import numpy
 import platform
 from time import sleep
 from colorama import init
 from colorama.ansi import Fore
-from cryptography.fernet import Fernet
-from udp import UDP
 from man import logo, man
 
 init(autoreset=True)
@@ -64,36 +60,6 @@ class TCP:
         nombre = os.path.abspath(ubicacion)
         nombre = os.path.basename(nombre)
         return nombre
-
-    # Funcion para generar una clave de encriptacion
-    # clave --> nombre del archivo en que se almacena la clave
-    def generarClave(self, clave):
-        key = Fernet.generate_key()
-
-        with open(clave, 'wb') as keyFile:
-            keyFile.write(key)
-        keyFile.close()
-        print(Fore.GREEN + f"[+] Clave \"{clave}\" generada")
-
-    # Funcion para regresar una clave de encriptacion
-    # clave --> ubicacio del archivo en donde se almacena la clave
-    def cargarClave(self, clave):
-        return open(clave, 'rb').read()
-
-    # Funcion para obtener la escala de una imagen (adaptar la imagen)
-    # height --> alto de la imagen
-    # width --> ancho de la imagen
-    def escalar(self, height, width):
-        if height > width:
-            escala = 600/height
-        elif width > height:
-            escala = 600/width
-        else:
-            escala = (height+width)/2
-            escala = 600/escala
-
-        # Se regresa la escala que se usara para la imagen
-        return escala
 
     # Funcion para enviar datos
     # info --> informacion a enviar
@@ -407,122 +373,6 @@ class TCP:
             else:
                 print(Fore.YELLOW + f"[!] Archivo \"{origen}\" no encontrado")
 
-    # Funcion para recibir y visualizar una imagen
-    # cmd --> comando ingresado
-    def image(self, cmd):
-        self.__conexion.send(cmd.encode())
-
-        msg = self.__conexion.recv(1024).decode()
-        if msg[:6] != "error:":
-            self.__conexion.send("ok".encode())
-            nombre = self.__conexion.recv(1024).decode()
-
-            self.__conexion.send("ok".encode())
-            info = self.recibirDatos()
-
-            matriz = numpy.frombuffer(info, dtype=numpy.uint8)
-            imagen = cv2.imdecode(matriz, -1)
-
-            if re.search("-t[= ]", cmd):
-                escala = float(re.findall("-t[= ]([0-9.].*)", cmd)[0])
-            else:
-                height, width = imagen.shape[:2]
-                escala = self.escalar(height, width)
-            imagen = cv2.resize(imagen, None, fx=escala, fy=escala)
-            print(f"Escala: {escala}")
-
-            if re.search("-90", cmd):
-                imagen = cv2.rotate(imagen, cv2.ROTATE_90_COUNTERCLOCKWISE)
-            if re.search("-180", cmd):
-                imagen = cv2.rotate(imagen, cv2.ROTATE_180)
-            if re.search("-270", cmd):
-                imagen = cv2.rotate(imagen, cv2.ROTATE_90_CLOCKWISE)
-            if re.search("-x", cmd):
-                imagen = cv2.flip(imagen, 0)
-            if re.search("-y", cmd):
-                imagen = cv2.flip(imagen, 1)
-            if re.search("-g", cmd):
-                imagen = cv2.cvtColor(imagen, cv2.COLOR_BGR2GRAY)
-            if re.search("-n", cmd):
-                imagen = 255 - imagen
-            if re.search("-m", cmd):
-                flip = cv2.flip(imagen, 1)
-                imagen = numpy.hstack((imagen, flip))
-            if re.search("-c", cmd):
-                grises = cv2.cvtColor(imagen, cv2.COLOR_BGR2GRAY)
-                blur = cv2.GaussianBlur(grises, (3,3), 0)
-                t1 = int(input("Threshold1: "))
-                t2 = int(input("Threshold2: "))
-                canny = cv2.Canny(image=blur, threshold1=t1, threshold2=t2)
-                imagen = cv2.cvtColor(canny, cv2.COLOR_GRAY2BGR)
-
-            print(f"{self.__userName}@{self.__addr[0]}: {nombre}")
-            cv2.imshow(f"{self.__userName}@{self.__addr[0]}: {nombre}", imagen)
-            cv2.waitKey()
-            cv2.destroyAllWindows()
-
-        else:
-            print(Fore.RED + f"[-] {self.__userName}@{self.__addr[0]}: {msg}")
-
-    # Funcion para recibir una foto de la camara y visualizarla
-    # cmd --> comando ingresado
-    def pic(self, cmd):
-        self.__conexion.send(cmd.encode())
-
-        msg = self.__conexion.recv(1024).decode()
-        if msg[:6] != "error:":
-            self.__conexion.send("ok".encode())
-            info = self.recibirDatos()
-
-            matriz = numpy.frombuffer(info, dtype=numpy.uint8)
-            imagen = cv2.imdecode(matriz, -1)
-
-            height, width = imagen.shape[:2]
-            escala = self.escalar(height, width)
-            imagen = cv2.resize(imagen, None, fx=escala, fy=escala)
-
-            print(f"Escala: {escala}")
-            cv2.imshow(f"{self.__userName}@{self.__addr[0]}: Foto", imagen)
-            cv2.waitKey()
-            cv2.destroyAllWindows()
-
-            if re.search("-s", cmd):
-                if not os.path.isdir(f"{self.initDir}/pics"):
-                    os.mkdir(f"{self.initDir}/pics")
-                fotoRuta = f"{self.initDir}/pics/pic{self.pics}.jpg"
-                cv2.imwrite(fotoRuta, imagen)
-                print(Fore.GREEN + f"[+] Foto \"{fotoRuta}\" guardada")
-                self.pics += 1
-        
-        else:
-            print(Fore.RED + f"[-] {self.__userName}@{self.__addr[0]}: {msg}")
-
-    # Funcion para recibir video del cliente
-    # cmd --> comando ingresado
-    def captura(self, cmd):
-        udp = UDP(self.__host, self.__port)
-        self.__conexion.send(cmd.encode())
-
-        msg = self.__conexion.recv(1024).decode()
-        if msg[:6].lower() != "error:":
-            try:
-                udp.conectar()
-                self.__conexion.send("ok".encode())
-                if re.search("-s", cmd):
-                    udp.captura(self.__userName, 1)
-                else:
-                    udp.captura(self.__userName)
-                sleep(0.1)
-                udp.close()
-                msg = self.__conexion.recv(1024).decode()
-                print(msg)
-            except:
-                udp.close()
-                msg = self.__conexion.recv(1024).decode()
-                print(msg)
-        else:
-            print(Fore.RED + f"[-] {self.__userName}@{self.__addr[0]}: {msg}")
-
     # Funcion para recibir un directorio del cliente
     # cmd --> comando ingresado
     def sendDirFrom(self, cmd):
@@ -626,93 +476,6 @@ class TCP:
             print(Fore.GREEN + f"[+] {self.__userName}@{self.__addr[0]}: {msg}")
         else:
             print(Fore.RED + f"[-] {self.__userName}@{self.__addr[0]}: {msg}")
-
-    # Funcion para encriptar un directorio del cliente
-    # cmd --> comando ingresado
-    def encrypt(self, cmd):
-        clave = re.findall("-k[= ]([a-zA-Z0-9./ ].*) -e", cmd)[0]
-        directorio = re.findall("-e[= ]([a-zA-Z0-9./ ].*)", cmd)[0]
-        if clave.endswith(".key"):
-            self.generarClave(f"{clave}")
-            key = self.cargarClave(f"{clave}")
-
-            self.__conexion.send(cmd.encode())
-            ok = self.__conexion.recv(8)
-            self.__conexion.send(key)
-
-            msg = self.__conexion.recv(1024).decode()
-            if msg[:6] != "error:":
-                nombre = msg.split('\n')[1]
-                print(Fore.MAGENTA + f"[?] Segur@ que quieres encriptar el directorio \"{nombre}\"?...\n[S/n] ", end='')
-                res = input()
-
-                if len(res) == 0 or res.upper() == 'S':
-                    self.__conexion.send('S'.encode())
-
-                    msg = self.__conexion.recv(1024).decode()
-                    if msg[:6] != "error:":
-                        print(Fore.GREEN + f"[+] {self.__userName}@{self.__addr[0]}: {msg}")
-                        self.__conexion.send("ok".encode())
-                        self.recibirArchivo(f"{self.initDir}/{clave}.dat")
-                    else:
-                        print(Fore.RED + f"[-] {self.__userName}@{self.__addr[0]}: {msg}")
-
-                else:
-                    self.__conexion.send('N'.encode())
-                    msg = self.__conexion.recv(1024).decode()
-                    print(Fore.YELLOW + f"[!] {self.__userName}@{self.__addr[0]}: {msg}")
-
-            else:
-                print(Fore.RED + f"[-] {self.__userName}@{self.__addr[0]}: {msg}")
-
-        else:
-            print(Fore.YELLOW + f"[!] Error al crear la clave \"{clave}\"")
-
-    # Funcion para desencriptar un directorio del cliente
-    # cmd --> comando ingresado
-    def decrypt(self, cmd, clave):
-        if os.path.isfile(clave) and clave.endswith(".key"):
-            print(Fore.MAGENTA + f"[?] Segur@ que quieres usar la clave \"{clave}\"?...\n[S/n] ", end='')
-            res = input()
-
-            if len(res) == 0 or res.upper() == 'S':
-                key = self.cargarClave(clave)
-                self.__conexion.send(cmd.encode())
-                ok = self.__conexion.recv(8)
-                self.__conexion.send(key)
-
-                msg = self.__conexion.recv(1024).decode()
-                if msg[:6] != "error:":
-                    nombre = msg.split('\n')[1]
-                    print(Fore.MAGENTA + f"[?] Segur@ que quieres desencriptar el directorio \"{nombre}\"?...\n[S/n] ", end='')
-                    res = input()
-
-                    if len(res) == 0 or res.upper() == 'S':
-                        self.__conexion.send('S'.encode())
-
-                        msg = self.__conexion.recv(1024).decode()
-                        if msg[:6] != "error:":
-                            print(Fore.GREEN + f"[+] {self.__userName}@{self.__addr[0]}: {msg}")
-                            self.__conexion.send("ok".encode())
-                            self.recibirArchivo(f"{self.initDir}/{self.getNombre(clave)}.dat")
-                            os.remove(f"{clave}")
-                            print(Fore.YELLOW + f"[!] Clave \"{clave}\" eliminada")
-
-                        else:
-                            print(Fore.RED + f"[-] {self.__userName}@{self.__addr[0]}: {msg}")
-
-                    else:
-                        self.__conexion.send('N'.encode())
-                        msg = self.__conexion.recv(1024).decode()
-                        print(Fore.YELLOW + f"[!] {self.__userName}@{self.__addr[0]}: {msg}")
-
-                else:
-                    print(Fore.RED + f"[-] {self.__userName}@{self.__addr[0]}: {msg}")
-
-            else:
-                print(Fore.YELLOW + f"[!] Desencriptacion cancelada")
-        else:
-            print(Fore.YELLOW + f"[!] Clave \"{clave}\" no encontrada")
 
     # Funcion para descargar archivos web en la maquina del cliente
     # cmd --> comando ingresado
